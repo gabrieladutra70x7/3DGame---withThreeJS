@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D GAME - Movimentos Completos</title>
+    <style>
+        body {
+            background-color: #000;
+            margin: 0;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+        #hud {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            color: #fff;
+            background: rgba(0, 0, 0, 0.45);
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.5;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="hud">
+    <strong>Controles:</strong><br>
+    WASD: Andar | Shift: Correr<br>
+    Espaço: Pular | E: Ação
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@v0.187.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@v0.187.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // ---- 1. CENA E HORIZONTE NOSTÁLGICO ----
+    const corCeu = 0xe8b89a;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(corCeu);
+    scene.fog = new THREE.FogExp2(corCeu, 0.018);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 2.5, -5);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enablePan = false;
+    controls.maxPolarAngle = Math.PI / 2 - 0.05;
+
+    // ---- 2. ILUMINAÇÃO ----
+    const ambientLight = new THREE.AmbientLight(0xffc98b, 1.5);
+    scene.add(ambientLight);
+
+    const sunLight = new THREE.DirectionalLight(0xff9e5e, 2.5);
+    sunLight.position.set(20, 40, 20);
+    sunLight.castShadow = true;
+    scene.add(sunLight);
+
+    // ---- 3. CHÃO INFINITO ----
+    function criarTexturaChao() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+
+        ctx.fillStyle = '#c2a378';
+        ctx.fillRect(0, 0, 128, 128);
+        ctx.fillStyle = '#b59469';
+        ctx.fillRect(0, 0, 64, 64);
+        ctx.fillRect(64, 64, 64, 64);
+
+        const textura = new THREE.CanvasTexture(canvas);
+        textura.wrapS = THREE.RepeatWrapping;
+        textura.wrapT = THREE.RepeatWrapping;
+        textura.repeat.set(50, 50);
+        return textura;
+    }
+
+    const tamanhoBloco = 4;
+    const chao = new THREE.Mesh(
+        new THREE.PlaneGeometry(200, 200),
+        new THREE.MeshStandardMaterial({ map: criarTexturaChao(), roughness: 0.9 })
+    );
+    chao.rotation.x = -Math.PI / 2;
+    chao.receiveShadow = true;
+    scene.add(chao);
+
+    // ---- 4. ELEMENTOS DO CENÁRIO ----
+    const objetosCenario = [];
+    const raioArea = 65;
+
+    function criarArvore(x, z) {
+        const grupo = new THREE.Group();
+
+        const tronco = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.25, 0.4, 2, 7),
+            new THREE.MeshStandardMaterial({ color: 0x6e473b })
+        );
+        tronco.position.y = 1;
+        tronco.castShadow = true;
+
+        const copa = new THREE.Mesh(
+            new THREE.ConeGeometry(1.6, 3.5, 7),
+            new THREE.MeshStandardMaterial({ color: 0x6a8d6d })
+        );
+        copa.position.y = 3.2;
+        copa.castShadow = true;
+
+        grupo.add(tronco, copa);
+        grupo.position.set(x, 0, z);
+        scene.add(grupo);
+        objetosCenario.push(grupo);
+    }
+
+    for (let i = 0; i < 50; i++) {
+        const x = (Math.random() - 0.5) * (raioArea * 2);
+        const z = (Math.random() - 0.5) * (raioArea * 2);
+        if (Math.hypot(x, z) > 6) criarArvore(x, z);
+    }
+
+    function atualizarCenarioInfinito() {
+        if (!character) return;
+
+        chao.position.x = Math.floor(character.position.x / tamanhoBloco) * tamanhoBloco;
+        chao.position.z = Math.floor(character.position.z / tamanhoBloco) * tamanhoBloco;
+
+        const limite = raioArea;
+        const diametro = raioArea * 2;
+
+        for (const obj of objetosCenario) {
+            const dx = obj.position.x - character.position.x;
+            const dz = obj.position.z - character.position.z;
+
+            if (dx > limite) obj.position.x -= diametro;
+            if (dx < -limite) obj.position.x += diametro;
+            if (dz > limite) obj.position.z -= diametro;
+            if (dz < -limite) obj.position.z += diametro;
+        }
+    }
+
+    // ---- 5. PERSONAGEM, FÍSICA E ANIMAÇÕES ----
+    const loader = new GLTFLoader();
+    let character;
+    let mixer;
+    let playerAnimacoes = [];
+    let clipAtual;
+    const relogio = new THREE.Clock();
+
+    // Estados de movimento
+    const teclas = { w: false, a: false, s: false, d: false, shift: false };
+    const velocidadeAndar = 4.5;
+    const velocidadeCorrer = 9.0;
+
+    // Física de pulo
+    let velocidadeY = 0;
+    const gravidade = -24;
+    const forcaPulo = 9.0;
+    let noChao = true;
+
+    // Controle de animações únicas (ex: ataque/ação)
+    let executandoAcao = false;
+
+    window.addEventListener("keyup", (event) => {
+        const tecla = event.key.toLowerCase();
+        if (tecla in teclas) teclas[tecla] = false;
+    });
+
+    window.addEventListener("keydown", (event) => {
+        const tecla = event.key.toLowerCase();
+        if (tecla in teclas) teclas[tecla] = true;
+
+        // Pulo com Barra de Espaço
+        if (event.code === "Space" && noChao && !executandoAcao) {
+            event.preventDefault();
+            velocidadeY = forcaPulo;
+            noChao = false;
+            trocarAnimacao("Jump", false);
+        }
+
+        // Ação / Ataque com tecla E
+        if (tecla === "e" && noChao && !executandoAcao) {
+            const candidatosAcao = ["Punch", "Attack", "Sword", "Sword_Attack", "Interact", "Wave", "Roll"];
+            const acaoEncontrada = candidatosAcao.find(nome => encontrarClip(nome));
+
+            if (acaoEncontrada) {
+                executandoAcao = true;
+                trocarAnimacao(acaoEncontrada, false);
+            }
+        }
+    });
+
+    // Busca o clipe pelo final do nome (ignora prefixos longos como CharacterArmature|...)
+    function encontrarClip(nomeCurto) {
+        const alvo = nomeCurto.toLowerCase();
+        return (
+            playerAnimacoes.find(c => c.name.toLowerCase() === alvo || c.name.toLowerCase().endsWith("|" + alvo)) ||
+            playerAnimacoes.find(c => c.name.toLowerCase().includes(alvo))
+        );
+    }
+
+    function trocarAnimacao(nomeCurto, repetir = true) {
+        if (!mixer) return;
+
+        const clip = encontrarClip(nomeCurto);
+        if (!clip || clipAtual?.getClip() === clip) return;
+
+        const newClip = mixer.clipAction(clip);
+        if (clipAtual) clipAtual.fadeOut(0.15);
+
+        newClip.reset();
+        newClip.setLoop(repetir ? THREE.LoopRepeat : THREE.LoopOnce);
+        newClip.clampWhenFinished = !repetir;
+        newClip.fadeIn(0.15).play();
+
+        clipAtual = newClip;
+    }
+
+    function movimentarPersonagem(delta) {
+        if (!character) return;
+
+        // 1. Física vertical (Pulo e Gravidade)
+        if (!noChao) {
+            character.position.y += velocidadeY * delta;
+            velocidadeY += gravidade * delta;
+
+            if (character.position.y <= 0) {
+                character.position.y = 0;
+                velocidadeY = 0;
+                noChao = true;
+            }
+        }
+
+        // 2. Movimento horizontal (bloqueado enquanto executa ataque/ação no chão)
+        let movimentoX = 0;
+        let movimentoZ = 0;
+
+        if (!executandoAcao) {
+            if (teclas.w) movimentoZ += 1;
+            if (teclas.s) movimentoZ -= 1;
+            if (teclas.a) movimentoX += 1;
+            if (teclas.d) movimentoX -= 1;
+        }
+
+        const movendo = movimentoX !== 0 || movimentoZ !== 0;
+        const correndo = movendo && teclas.shift;
+        const velocidadeAtual = correndo ? velocidadeCorrer : velocidadeAndar;
+
+        if (movendo) {
+            const direcao = new THREE.Vector3(movimentoX, 0, movimentoZ).normalize();
+
+            const deslocamentoX = direcao.x * velocidadeAtual * delta;
+            const deslocamentoZ = direcao.z * velocidadeAtual * delta;
+
+            character.position.x += deslocamentoX;
+            character.position.z += deslocamentoZ;
+
+            camera.position.x += deslocamentoX;
+            camera.position.z += deslocamentoZ;
+
+            character.rotation.y = Math.atan2(direcao.x, direcao.z);
+        }
+
+        // Mantém o foco da câmera acompanhando o personagem (inclusive no pulo)
+        controls.target.set(character.position.x, character.position.y + 1.5, character.position.z);
+
+        // 3. Máquina de estados de animação no chão
+        if (noChao && !executandoAcao) {
+            if (correndo && encontrarClip("Run")) {
+                trocarAnimacao("Run", true);
+            } else if (movendo) {
+                trocarAnimacao("Walk", true);
+            } else {
+                trocarAnimacao("Idle", true);
+            }
+        }
+    }
+
+    loader.load('modelo/player.glb', (gltf) => {
+        character = gltf.scene;
+        character.traverse((child) => {
+            if (child.isMesh) child.castShadow = true;
+        });
+
+        mixer = new THREE.AnimationMixer(character);
+        playerAnimacoes = gltf.animations;
+        scene.add(character);
+
+        // Lista no console todas as animações disponíveis no seu arquivo .glb
+        console.log("Animações encontradas no player.glb:", playerAnimacoes.map(a => a.name));
+
+        // Libera o personagem assim que uma animação única (como ataque) terminar
+        mixer.addEventListener('finished', () => {
+            executandoAcao = false;
+        });
+
+        controls.target.set(0, 1.5, 0);
+        trocarAnimacao("Idle", true);
+    });
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ---- 6. LOOP PRINCIPAL ----
+    function animate() {
+        requestAnimationFrame(animate);
+
+        const delta = relogio.getDelta();
+
+        movimentarPersonagem(delta);
+        atualizarCenarioInfinito();
+        controls.update();
+
+        if (mixer) mixer.update(delta);
+
+        renderer.render(scene, camera);
+    }
+
+    animate();
+</script>
+</body>
+</html>

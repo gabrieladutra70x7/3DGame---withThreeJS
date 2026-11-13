@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D GAME</title>
+    <style>
+        body{
+            background-color: rgb(0, 0, 0);
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    
+
+
+    <script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@v0.187.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@v0.187.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+    import * as THREE from 'three'
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xffffff)
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+     camera.position.x = 0;
+     camera.position.y = 2.5;
+    camera.position.z = -5;
+
+
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+
+    //---- luz do ambiente ----
+
+    const ambientLight = new THREE.AmbientLight(0xffc98b,5);
+    scene.add( ambientLight );
+
+
+    //---- carregar o personagem ----
+    const loader = new GLTFLoader();
+    
+    
+    //minhas variaveis
+    let character;
+    let mixer; //executa animacao
+    let playerAnimacoes = [];
+    let clipAtual;
+    let relogio = new THREE.Clock();
+    
+    const teclas = {
+            w:false,
+            a:false,
+            s:false,
+            d:false 
+    } 
+
+    let velocidade = 0.2;
+    
+    window.addEventListener("keyup", (event) =>{
+        const tecla = event.key.toLocaleLowerCase()
+
+        if(tecla in teclas){
+            teclas[tecla] = false
+        }
+
+    })
+
+    window.addEventListener("keydown", () =>{
+        const tecla = event.key.toLocaleLowerCase()
+
+        if(tecla in teclas){
+            teclas[tecla] = true
+        }
+
+    })
+
+    function movimentarPersonagem(delta){
+        
+        if(!character) return;
+
+        let movimentoX = 0;
+        let movimentoZ = 0;
+
+        if(teclas.w) movimentoZ -=0.5;
+        if(teclas.s) movimentoZ +=0.5;
+        if(teclas.a) movimentoX -=0.5;
+        if(teclas.d) movimentoX +=0.5;
+
+        const movendo = movimentoX != 0 || movimentoZ != 0;
+
+        if(movendo){
+            const direcao = new THREE.Vector3(
+                movimentoX, 
+                0,
+                movimentoZ
+            ).normalize();
+
+            character.position.x += direcao.x * velocidade * delta
+            character.position.z += direcao.x * velocidade * delta
+
+                character.rotation.y = Math.atan2(direcao.x, direcao.z)
+            
+            trocarAnimacao("CharacterArmature|CharacterArmature|CharacterArmature|Walk")
+        }else{
+            trocarAnimacao("CharacterArmature|CharacterArmature|CharacterArmature|Idle")
+
+        }
+
+    }
+
+
+    loader.load('modelo/player.glb', (gltf) => {
+        character = gltf.scene
+        mixer = new THREE.AnimationMixer(character);
+
+        playerAnimacoes = gltf.animations;
+
+        scene.add(character);
+        
+        console.log(gltf.animations)
+        trocarAnimacao("CharacterArmature|CharacterArmature|CharacterArmature|Idle");
+    })
+
+    function trocarAnimacao(nome){
+        if(!mixer) return;
+
+        const clip = THREE.AnimationClip.findByName(
+            playerAnimacoes,
+            nome
+        )
+
+        if(!clip) return;
+        if(clipAtual?.getClip()== clip) return;
+
+        const newClip = mixer.clipAction(clip);
+
+        if(clipAtual){
+            clipAtual.fadeOut(0.2)
+        }
+
+        newClip.reset();
+        newClip.fadeIn(0.2);
+        newClip.play();
+
+        clipAtual = newClip
+
+    }
+
+//animação
+    function animate(){
+        requestAnimationFrame(animate)
+
+        const delta = relogio.getDelta();
+
+        movimentarPersonagem(delta);
+        controls.update();
+
+        if(mixer){
+            mixer.update(delta);
+        }
+        
+        renderer.render(scene, camera);
+    
+    } 
+
+    animate()
+</script>
+</body>
+</html>
